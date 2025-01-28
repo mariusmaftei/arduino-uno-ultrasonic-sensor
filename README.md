@@ -1,4 +1,4 @@
-# Arduino Radar 🚗📡  
+# Arduino Radar 📱📡  
 
 **Arduino Radar** is an app that lets you control and monitor a radar system with an Arduino Uno and ultrasonic sensor.
 
