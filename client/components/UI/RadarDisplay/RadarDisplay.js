@@ -19,6 +19,54 @@ const RadarDisplay = ({ angle, distance }) => {
   const sweepAnim = useRef(new Animated.Value(90)).current;
   const prevAngle = useRef(angle);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const prevDistance = useRef(null);
+
+  // Wave effect animations
+  const waveAnim1 = useRef(new Animated.Value(0)).current;
+  const waveAnim2 = useRef(new Animated.Value(0)).current;
+  const waveAnim3 = useRef(new Animated.Value(0)).current;
+
+  // Track distance changes for visual updates only (no automatic sound)
+  useEffect(() => {
+    prevDistance.current = distance;
+  }, [distance]);
+
+  // Initialize wave animations
+  useEffect(() => {
+    const createWaveAnimation = (animValue, delay = 0) => {
+      return Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(animValue, {
+            toValue: 1,
+            duration: 2000,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(animValue, {
+            toValue: 0,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+    };
+
+    // Start wave animations with staggered delays
+    const wave1 = createWaveAnimation(waveAnim1, 0);
+    const wave2 = createWaveAnimation(waveAnim2, 700);
+    const wave3 = createWaveAnimation(waveAnim3, 1400);
+
+    wave1.start();
+    wave2.start();
+    wave3.start();
+
+    return () => {
+      wave1.stop();
+      wave2.stop();
+      wave3.stop();
+    };
+  }, []);
 
   useEffect(() => {
     let currentAngle = sweepAnim.__getValue();
@@ -237,6 +285,109 @@ const RadarDisplay = ({ angle, distance }) => {
     );
   };
 
+  const renderWaveEffect = () => {
+    const wave1Scale = waveAnim1.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0, 1],
+    });
+
+    const wave2Scale = waveAnim2.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0, 1],
+    });
+
+    const wave3Scale = waveAnim3.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0, 1],
+    });
+
+    const wave1Opacity = waveAnim1.interpolate({
+      inputRange: [0, 0.1, 0.9, 1],
+      outputRange: [0, 0.8, 0.8, 0],
+    });
+
+    const wave2Opacity = waveAnim2.interpolate({
+      inputRange: [0, 0.1, 0.9, 1],
+      outputRange: [0, 0.6, 0.6, 0],
+    });
+
+    const wave3Opacity = waveAnim3.interpolate({
+      inputRange: [0, 0.1, 0.9, 1],
+      outputRange: [0, 0.4, 0.4, 0],
+    });
+
+    return (
+      <G>
+        <Animated.View
+          style={{
+            position: "absolute",
+            width: size,
+            height: size,
+            justifyContent: "center",
+            alignItems: "center",
+            transform: [{ scale: wave1Scale }],
+            opacity: wave1Opacity,
+          }}
+        >
+          <Svg height={size} width={size}>
+            <Circle
+              cx={size / 2}
+              cy={size / 2}
+              r={size / 2}
+              fill="none"
+              stroke="rgba(0, 255, 0, 0.6)"
+              strokeWidth="2"
+            />
+          </Svg>
+        </Animated.View>
+        <Animated.View
+          style={{
+            position: "absolute",
+            width: size,
+            height: size,
+            justifyContent: "center",
+            alignItems: "center",
+            transform: [{ scale: wave2Scale }],
+            opacity: wave2Opacity,
+          }}
+        >
+          <Svg height={size} width={size}>
+            <Circle
+              cx={size / 2}
+              cy={size / 2}
+              r={size / 2}
+              fill="none"
+              stroke="rgba(0, 255, 0, 0.4)"
+              strokeWidth="2"
+            />
+          </Svg>
+        </Animated.View>
+        <Animated.View
+          style={{
+            position: "absolute",
+            width: size,
+            height: size,
+            justifyContent: "center",
+            alignItems: "center",
+            transform: [{ scale: wave3Scale }],
+            opacity: wave3Opacity,
+          }}
+        >
+          <Svg height={size} width={size}>
+            <Circle
+              cx={size / 2}
+              cy={size / 2}
+              r={size / 2}
+              fill="none"
+              stroke="rgba(0, 255, 0, 0.2)"
+              strokeWidth="2"
+            />
+          </Svg>
+        </Animated.View>
+      </G>
+    );
+  };
+
   // Calculate target position to align with the radar hand
   const targetDistance = distance ? (distance / maxDistance) * (size / 2) : 0;
 
@@ -268,6 +419,7 @@ const RadarDisplay = ({ angle, distance }) => {
           strokeWidth="2"
         />
         {renderDistanceCircles()}
+        {renderWaveEffect()}
         {renderDegreeGraduations()}
         <Line
           x1={size / 2}

@@ -10,6 +10,7 @@ import { StatusBar } from "expo-status-bar";
 import io from "socket.io-client";
 import RadarDisplay from "./components/UI/RadarDisplay/RadarDisplay";
 import { MaterialIcons } from "@expo/vector-icons";
+import { Audio } from "expo-av";
 import CONFIG from "./config";
 
 const App = () => {
@@ -19,6 +20,34 @@ const App = () => {
   const [error, setError] = useState(null);
   const [currentAngle, setCurrentAngle] = useState(90);
   const [currentDistance, setCurrentDistance] = useState(null);
+  const [sound, setSound] = useState(null);
+  const [isMovingLeft, setIsMovingLeft] = useState(false);
+  const [isMovingRight, setIsMovingRight] = useState(false);
+  const [beepInterval, setBeepInterval] = useState(null);
+
+  // Initialize sound for feedback
+  useEffect(() => {
+    const loadSound = async () => {
+      try {
+        const { sound } = await Audio.Sound.createAsync(
+          require("./assets/sounds/radar-beeping.mp3")
+        );
+        setSound(sound);
+      } catch (error) {
+        console.log("Sound not available, using test mode without sound");
+      }
+    };
+    loadSound();
+
+    return () => {
+      if (sound) {
+        sound.unloadAsync();
+      }
+      if (beepInterval) {
+        clearInterval(beepInterval);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const socketConnection = io(CONFIG.SOCKET_URL);
@@ -72,6 +101,57 @@ const App = () => {
     };
   }, []);
 
+  const playBeep = useCallback(async () => {
+    if (sound) {
+      try {
+        // Stop any currently playing sound before starting a new one
+        await sound.stopAsync();
+        await sound.replayAsync();
+
+        // Add 2-second delay before allowing next replay
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      } catch (error) {
+        console.log("Could not play sound:", error);
+      }
+    }
+  }, [sound]);
+
+  // Calculate beep frequency based on radar position
+  const getBeepFrequency = useCallback(() => {
+    // Map angle (0-180) to frequency (200ms-800ms)
+    // Center (90°) = slower beeps, edges = faster beeps
+    const normalizedAngle = Math.abs(currentAngle - 90) / 90; // 0 to 1
+    const minInterval = 200; // Fastest beep (200ms)
+    const maxInterval = 800; // Slowest beep (800ms)
+    return maxInterval - normalizedAngle * (maxInterval - minInterval);
+  }, [currentAngle]);
+
+  // Start continuous beeping while holding
+  const startContinuousBeeping = useCallback(() => {
+    if (beepInterval) {
+      clearInterval(beepInterval);
+    }
+
+    const beep = () => {
+      playBeep();
+    };
+
+    // Initial beep
+    beep();
+
+    // Set up continuous beeps while holding - accounting for 2-second delay + 500ms gap
+    const interval = setInterval(beep, 2500); // 2000ms delay + 500ms gap = 2500ms total
+    setBeepInterval(interval);
+  }, [beepInterval, playBeep]);
+
+  // Stop continuous beeping
+  const stopContinuousBeeping = useCallback(() => {
+    if (beepInterval) {
+      clearInterval(beepInterval);
+      setBeepInterval(null);
+    }
+  }, [beepInterval]);
+
   const handleCommand = useCallback(
     (command) => {
       if (!isConnected) {
@@ -82,6 +162,7 @@ const App = () => {
       if (socket) {
         console.log("Sending command:", command);
         socket.emit("action", { command });
+        // No automatic beep - only beep while holding direction buttons
       }
     },
     [socket, isConnected]
@@ -92,16 +173,29 @@ const App = () => {
       if (isActive && isConnected) {
         const reversedDirection = direction === "left" ? "right" : "left";
         handleCommand(reversedDirection);
+
+        // Start continuous beeping while holding
+        if (direction === "left") {
+          setIsMovingLeft(true);
+        } else {
+          setIsMovingRight(true);
+        }
+        startContinuousBeeping();
       }
     },
-    [isActive, isConnected, handleCommand]
+    [isActive, isConnected, handleCommand, startContinuousBeeping]
   );
 
   const handleDirectionRelease = useCallback(() => {
     if (isActive && isConnected) {
       handleCommand("stop_movement");
+
+      // Stop continuous beeping and reset movement states
+      stopContinuousBeeping();
+      setIsMovingLeft(false);
+      setIsMovingRight(false);
     }
-  }, [isActive, isConnected, handleCommand]);
+  }, [isActive, isConnected, handleCommand, stopContinuousBeeping]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -127,7 +221,11 @@ const App = () => {
           {isActive && (
             <>
               <TouchableOpacity
-                style={[styles.button, styles.directionButton]}
+                style={[
+                  styles.button,
+                  styles.directionButton,
+                  isMovingLeft && styles.buttonActive,
+                ]}
                 onPressIn={() => handleDirectionPress("left")}
                 onPressOut={handleDirectionRelease}
               >
@@ -155,7 +253,11 @@ const App = () => {
             <>
               <View style={styles.buttonSpacing} />
               <TouchableOpacity
-                style={[styles.button, styles.directionButton]}
+                style={[
+                  styles.button,
+                  styles.directionButton,
+                  isMovingRight && styles.buttonActive,
+                ]}
                 onPressIn={() => handleDirectionPress("right")}
                 onPressOut={handleDirectionRelease}
               >
@@ -229,6 +331,10 @@ const styles = StyleSheet.create({
   },
   directionButton: {
     backgroundColor: "#4CAF50", // Green color
+  },
+  buttonActive: {
+    backgroundColor: "#2E7D32", // Darker green when active/pressed
+    transform: [{ scale: 0.95 }], // Slight scale down effect
   },
   buttonText: {
     color: "white",
