@@ -154,16 +154,13 @@ export async function initializeSerialPort() {
     parser = port.pipe(new ReadlineParser({ delimiter: "\n" }));
 
     parser.on("data", (data) => {
-      console.log("Received data from Arduino:", data);
-      
       // Parse Arduino data format: "Angle: X Distance: Y"
       const angleMatch = data.match(/Angle:\s*(-?\d+)/);
       const distanceMatch = data.match(/Distance:\s*(\d+)/);
-      
+
       if (angleMatch && distanceMatch) {
         const angle = parseInt(angleMatch[1], 10);
         const distance = parseInt(distanceMatch[1], 10);
-        console.log(`Parsed: angle=${angle}, distance=${distance}`);
         global.io.emit("scannedData", `Angle: ${angle} Distance: ${distance}`);
       }
     });
@@ -256,6 +253,9 @@ export function sendArduinoCommand(command) {
       break;
     case "stop_movement":
       arduinoCommand = "M\n";
+      break;
+    case "reset":
+      arduinoCommand = "C\n"; // Center/Reset command
       break;
     default:
       throw new Error(`Unknown command: ${command}`);

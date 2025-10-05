@@ -86,6 +86,17 @@ void loop()
     case 'M':
       moveDirection = 0;
       break;
+    case 'C':
+      Serial.println("Resetting radar to center...");
+      currentAngle = DEFAULT_ANGLE;
+      BaseServo.write(currentAngle);
+      moveDirection = 0;
+      // Send reset signal to clear the dot on the app
+      Serial.print("Angle: ");
+      Serial.print(90); // Center angle
+      Serial.print(" Distance: ");
+      Serial.println(0); // Send 0 to clear the dot
+      break;
     default:
       Serial.println("Unknown command");
       break;

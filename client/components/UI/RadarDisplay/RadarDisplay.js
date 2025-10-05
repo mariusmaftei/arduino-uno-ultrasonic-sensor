@@ -13,9 +13,16 @@ import Svg, {
 } from "react-native-svg";
 
 const size = 300; // Fixed size for the radar
-const maxDistance = 100; // Maximum distance in cm
+const initialMaxDistance = 100; // Initial maximum distance in cm
+const scaledMaxDistance = 50; // Scaled maximum distance when object found
 
-const RadarDisplay = ({ angle, distance }) => {
+const RadarDisplay = ({
+  angle,
+  distance,
+  detectionThreshold = 100, // Distance threshold for showing green dot
+  isScanning = false, // Whether radar is actively scanning
+  resetTrigger = 0, // Increment this to trigger a reset of first object
+}) => {
   const sweepAnim = useRef(new Animated.Value(90)).current;
   const prevAngle = useRef(angle);
   const [isTransitioning, setIsTransitioning] = useState(false);
@@ -26,10 +33,73 @@ const RadarDisplay = ({ angle, distance }) => {
   const waveAnim2 = useRef(new Animated.Value(0)).current;
   const waveAnim3 = useRef(new Animated.Value(0)).current;
 
+  // First object tracking and pulsing dot
+  const [firstObject, setFirstObject] = useState(null);
+  const [maxDistance, setMaxDistance] = useState(detectionThreshold);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Update maxDistance when prop changes
+  useEffect(() => {
+    setMaxDistance(detectionThreshold);
+  }, [detectionThreshold]);
+
   // Track distance changes for visual updates only (no automatic sound)
   useEffect(() => {
     prevDistance.current = distance;
   }, [distance]);
+
+  // Track first object found within dynamic maxDistance range (only when scanning)
+  useEffect(() => {
+    if (isScanning && distance && distance <= maxDistance && !firstObject) {
+      // Convert angle to radar coordinates
+      const radarAngle = (angle * Math.PI) / 180;
+      const radarDistance = (distance / maxDistance) * (size / 2);
+
+      const x = size / 2 + radarDistance * Math.sin(radarAngle);
+      const y = size / 2 - radarDistance * Math.cos(radarAngle);
+
+      setFirstObject({ x, y, angle, distance });
+    }
+
+    // Clear first object when not scanning
+    if (!isScanning) {
+      setFirstObject(null);
+    }
+  }, [distance, angle, firstObject, maxDistance, isScanning]);
+
+  // Clear first object when resetTrigger changes
+  useEffect(() => {
+    if (resetTrigger > 0) {
+      setFirstObject(null);
+    }
+  }, [resetTrigger]);
+
+  // Initialize pulsing animation for first object
+  useEffect(() => {
+    if (firstObject) {
+      const pulseAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 0.3,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulseAnimation.start();
+
+      return () => {
+        pulseAnimation.stop();
+      };
+    }
+  }, [firstObject, pulseAnim]);
 
   // Initialize wave animations
   useEffect(() => {
@@ -151,12 +221,13 @@ const RadarDisplay = ({ angle, distance }) => {
   };
 
   const renderDistanceCircles = () => {
+    // Always show full 100cm range circles
     const circles = [25, 50, 75, 100];
     return circles.map((circleDistance, index) => {
       const radius = (size / 2 / 4) * (index + 1);
       return (
         <Circle
-          key={circleDistance}
+          key={`circle-${circleDistance}`}
           cx={size / 2}
           cy={size / 2}
           r={radius}
@@ -256,19 +327,14 @@ const RadarDisplay = ({ angle, distance }) => {
             stroke="rgba(0, 255, 0, 0.7)"
             strokeWidth="1"
           />
-          <SvgText
-            x={8}
-            y={y}
-            fontSize="8"
-            fill="rgba(0, 255, 0, 0.7)"
-            textAnchor="start"
-            alignmentBaseline="middle"
-          >
-            {i * 10}cm
-          </SvgText>
         </G>
       );
     }
+
+    // Calculate position for dynamic graduation mark based on current distance
+    // Always use 100cm as maximum for radar display
+    const targetDistance = distance ? (distance / 100) * (size / 2) : 0;
+    const dynamicGraduationY = -targetDistance;
 
     return (
       <G>
@@ -281,6 +347,42 @@ const RadarDisplay = ({ angle, distance }) => {
           strokeWidth="2"
         />
         {graduations}
+
+        {/* Dynamic graduation mark showing current distance position - only show if within detection threshold */}
+        {/* Dynamic distance graduation - only show when object is actually detected */}
+        {distance && distance > 0 && distance <= detectionThreshold && (
+          <G>
+            {/* Main graduation line - longer and brighter */}
+            <Line
+              x1={-8}
+              y1={dynamicGraduationY}
+              x2={8}
+              y2={dynamicGraduationY}
+              stroke="rgba(0, 255, 0, 1)"
+              strokeWidth="3"
+            />
+            {/* Small indicator line pointing to the needle */}
+            <Line
+              x1={0}
+              y1={dynamicGraduationY - 3}
+              x2={0}
+              y2={dynamicGraduationY + 3}
+              stroke="rgba(0, 255, 0, 1)"
+              strokeWidth="2"
+            />
+            {/* Distance text label */}
+            <SvgText
+              x={12}
+              y={dynamicGraduationY}
+              fontSize="8"
+              fill="rgba(0, 255, 0, 1)"
+              textAnchor="start"
+              alignmentBaseline="middle"
+            >
+              {distance}cm
+            </SvgText>
+          </G>
+        )}
       </G>
     );
   };
@@ -391,6 +493,44 @@ const RadarDisplay = ({ angle, distance }) => {
   // Calculate target position to align with the radar hand
   const targetDistance = distance ? (distance / maxDistance) * (size / 2) : 0;
 
+  // Render pulsing green dot for first detected object
+  const renderPulsingDot = () => {
+    if (!firstObject) return null;
+
+    const pulseOpacity = pulseAnim.interpolate({
+      inputRange: [0.3, 1],
+      outputRange: [0.3, 1],
+    });
+
+    const pulseScale = pulseAnim.interpolate({
+      inputRange: [0.3, 1],
+      outputRange: [0.8, 1.2],
+    });
+
+    return (
+      <Animated.View
+        style={{
+          position: "absolute",
+          left: firstObject.x - 6,
+          top: firstObject.y - 6,
+          opacity: pulseOpacity,
+          transform: [{ scale: pulseScale }],
+        }}
+      >
+        <Svg width={12} height={12}>
+          <Circle
+            cx={6}
+            cy={6}
+            r={6}
+            fill="rgba(0, 255, 0, 0.9)"
+            stroke="rgba(0, 255, 0, 1)"
+            strokeWidth="1"
+          />
+        </Svg>
+      </Animated.View>
+    );
+  };
+
   return (
     <View style={styles.container}>
       <Svg height={size} width={size} style={styles.radar}>
@@ -450,13 +590,32 @@ const RadarDisplay = ({ angle, distance }) => {
           <Svg height={size} width={size}>
             <G x={size / 2} y={size / 2} mask="url(#mask)">
               {renderRadarHand()}
-              {distance && (
-                <Circle cx={0} cy={-targetDistance} r="3" fill="red" />
-              )}
+              {isScanning &&
+                distance &&
+                distance > 0 &&
+                distance <= detectionThreshold && (
+                  <Circle
+                    cx={0}
+                    cy={-targetDistance}
+                    r="3"
+                    fill={
+                      distance === detectionThreshold
+                        ? "rgba(0, 255, 0, 1)"
+                        : "rgba(255, 0, 0, 0.8)"
+                    }
+                    stroke={
+                      distance === detectionThreshold
+                        ? "rgba(0, 255, 0, 1)"
+                        : "none"
+                    }
+                    strokeWidth={distance === detectionThreshold ? "2" : "0"}
+                  />
+                )}
             </G>
           </Svg>
         </Animated.View>
       </Svg>
+      {renderPulsingDot()}
     </View>
   );
 };
