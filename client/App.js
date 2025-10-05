@@ -6,9 +6,11 @@ import {
   TouchableOpacity,
   SafeAreaView,
 } from "react-native";
+import { StatusBar } from "expo-status-bar";
 import io from "socket.io-client";
 import RadarDisplay from "./components/UI/RadarDisplay/RadarDisplay";
-import Icon from "react-native-vector-icons/MaterialIcons";
+import { MaterialIcons } from "@expo/vector-icons";
+import CONFIG from "./config";
 
 const App = () => {
   const [isActive, setIsActive] = useState(false);
@@ -19,7 +21,7 @@ const App = () => {
   const [currentDistance, setCurrentDistance] = useState(null);
 
   useEffect(() => {
-    const socketConnection = io(`http://${process.env.EXPO_SERVER_URL}:3020`);
+    const socketConnection = io(CONFIG.SOCKET_URL);
 
     socketConnection.on("connect", () => {
       console.log("Connected to server");
@@ -103,6 +105,7 @@ const App = () => {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar style="light" />
       <View style={styles.content}>
         {!isActive ? (
           <View style={styles.startScreen}>
@@ -128,7 +131,7 @@ const App = () => {
                 onPressIn={() => handleDirectionPress("left")}
                 onPressOut={handleDirectionRelease}
               >
-                <Icon name="arrow-back" size={24} color="white" />
+                <MaterialIcons name="arrow-back" size={24} color="white" />
               </TouchableOpacity>
               <View style={styles.buttonSpacing} />
             </>
@@ -141,7 +144,7 @@ const App = () => {
             ]}
             onPress={() => handleCommand(isActive ? "stop" : "start")}
           >
-            <Icon
+            <MaterialIcons
               name={isActive ? "stop" : "play-arrow"}
               size={24}
               color="white"
@@ -156,7 +159,7 @@ const App = () => {
                 onPressIn={() => handleDirectionPress("right")}
                 onPressOut={handleDirectionRelease}
               >
-                <Icon name="arrow-forward" size={24} color="white" />
+                <MaterialIcons name="arrow-forward" size={24} color="white" />
               </TouchableOpacity>
             </>
           )}
