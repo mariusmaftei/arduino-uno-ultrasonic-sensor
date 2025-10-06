@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -36,6 +36,8 @@ const App = () => {
   const [tempThreshold, setTempThreshold] = useState("100");
   const [firstObjectFound, setFirstObjectFound] = useState(null);
   const [resetTrigger, setResetTrigger] = useState(0);
+  const detectionThresholdRef = useRef(detectionThreshold);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Initialize sound for feedback
   useEffect(() => {
@@ -62,6 +64,10 @@ const App = () => {
   }, []);
 
   useEffect(() => {
+    detectionThresholdRef.current = detectionThreshold;
+  }, [detectionThreshold]);
+
+  useEffect(() => {
     const socketConnection = io(CONFIG.SOCKET_URL);
 
     socketConnection.on("connect", () => {
@@ -85,23 +91,22 @@ const App = () => {
           if (match) {
             const angle = parseInt(match[1], 10);
             const distance = parseInt(match[2], 10);
+            const threshold = detectionThresholdRef.current;
             setCurrentAngle(angle);
 
-            // Handle distance = 0 as "clear dot" signal
+            // When distance is 0, clear only the live dot, keep first object info
             if (distance === 0) {
               setCurrentDistance(null);
-              setFirstObjectFound(null);
             } else {
               setCurrentDistance(distance);
 
-              // Track first object found within detection range
-              if (distance <= detectionThreshold && distance > 0) {
+              // Capture the very first object within threshold and persist it
+              if (distance > 0 && distance <= threshold) {
                 setFirstObjectFound((prev) => {
-                  // If no object found yet, or if this is closer than the current first object
-                  if (!prev || distance < prev.distance) {
+                  if (!prev) {
                     return { angle, distance };
                   }
-                  return prev; // Keep the existing first object if it's closer
+                  return prev; // Persist first detected object; do not overwrite
                 });
               }
             }
@@ -116,10 +121,6 @@ const App = () => {
       console.log("Status update:", status);
       if (typeof status === "object" && status.hasOwnProperty("isScanning")) {
         setIsActive(status.isScanning);
-        // Clear first object when stopping
-        if (!status.isScanning) {
-          setFirstObjectFound(null);
-        }
       }
     });
 
@@ -134,6 +135,13 @@ const App = () => {
       socketConnection.disconnect();
     };
   }, []);
+
+  // Clear the first object box immediately if user lowers threshold below stored distance
+  useEffect(() => {
+    if (firstObjectFound && firstObjectFound.distance > detectionThreshold) {
+      setFirstObjectFound(null);
+    }
+  }, [detectionThreshold, firstObjectFound]);
 
   const playBeep = useCallback(async () => {
     if (sound) {
@@ -204,7 +212,7 @@ const App = () => {
     } else {
       Alert.alert(
         "Invalid Value",
-        "Please enter a detection range between 1 and 100 cm",
+        "Please enter a detection treshold between 1 and 100 cm",
         [{ text: "OK" }]
       );
     }
@@ -273,6 +281,19 @@ const App = () => {
     }
   }, [isActive, isConnected, handleCommand, playBeep]);
 
+  const openResetConfirm = useCallback(() => {
+    setShowResetConfirm(true);
+  }, []);
+
+  const closeResetConfirm = useCallback(() => {
+    setShowResetConfirm(false);
+  }, []);
+
+  const confirmReset = useCallback(() => {
+    closeResetConfirm();
+    handleReset();
+  }, [closeResetConfirm, handleReset]);
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
@@ -280,8 +301,8 @@ const App = () => {
         {!isActive ? (
           <View style={styles.startScreen}>
             <Text style={styles.startText}>Arduino Uno</Text>
-            <Text style={styles.startTextUltrasonic}>Ultrasonic Sensor</Text>
-            <Text style={styles.startTextWhite}>Press Start Button</Text>
+            <Text style={styles.startTextUltrasonic}>Sonar Sensor App</Text>
+            <Text style={styles.startTextWhite}>Press Power Button</Text>
           </View>
         ) : (
           <View style={styles.radarScreen}>
@@ -291,13 +312,21 @@ const App = () => {
               detectionThreshold={detectionThreshold}
               isScanning={isActive}
               resetTrigger={resetTrigger}
+              onFirstObjectDetected={({ angle, distance }) => {
+                setFirstObjectFound((prev) => {
+                  if (!prev || distance < prev.distance) {
+                    return { angle, distance };
+                  }
+                  return prev;
+                });
+              }}
             />
             <Text style={styles.dataText}>Angle: {currentAngle}°</Text>
             <Text style={styles.dataText}>
               Distance: {currentDistance ? `${currentDistance} cm` : "N/A"}
             </Text>
             <Text style={styles.dataText}>
-              Detection Range: {detectionThreshold} cm
+              Detection Treshold: {detectionThreshold} cm
             </Text>
 
             {/* First Object Found Display */}
@@ -313,22 +342,26 @@ const App = () => {
               </View>
             )}
 
-            {/* Settings Button */}
-            <TouchableOpacity
-              style={styles.settingsButton}
-              onPress={openSettingsModal}
-            >
-              <MaterialIcons name="settings" size={20} color="#0f0" />
-              <Text style={styles.settingsButtonText}>Settings</Text>
-            </TouchableOpacity>
+            {/* Settings + Reset (row) */}
+            <View style={styles.settingsRow}>
+              <TouchableOpacity
+                style={styles.settingsButton}
+                onPress={openResetConfirm}
+              >
+                <MaterialIcons name="refresh" size={20} color="#0f0" />
+                <Text style={styles.settingsButtonText}>Reset</Text>
+              </TouchableOpacity>
 
-            {/* Reset Button - Under Settings */}
-            <TouchableOpacity
-              style={styles.resetButtonSmall}
-              onPress={handleReset}
-            >
-              <MaterialIcons name="refresh" size={16} color="#0f0" />
-            </TouchableOpacity>
+              <View style={styles.settingsSpacer} />
+
+              <TouchableOpacity
+                style={styles.settingsButton}
+                onPress={openSettingsModal}
+              >
+                <MaterialIcons name="settings" size={20} color="#0f0" />
+                <Text style={styles.settingsButtonText}>Settings</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
 
@@ -344,24 +377,19 @@ const App = () => {
                 onPressIn={() => handleDirectionPress("left")}
                 onPressOut={handleDirectionRelease}
               >
-                <MaterialIcons name="arrow-back" size={24} color="white" />
+                <MaterialIcons name="arrow-back" size={24} color="#0f0" />
               </TouchableOpacity>
               <View style={styles.buttonSpacing} />
             </>
           )}
 
           <TouchableOpacity
-            style={[
-              styles.button,
-              isActive ? styles.stopButton : styles.startButton,
-            ]}
+            style={[styles.button, styles.directionButton]}
             onPress={() => handleCommand(isActive ? "stop" : "start")}
+            onLongPress={() => handleCommand(isActive ? "stop" : "start")}
+            delayLongPress={600}
           >
-            <MaterialIcons
-              name={isActive ? "stop" : "play-arrow"}
-              size={24}
-              color="white"
-            />
+            <MaterialIcons name="power-settings-new" size={24} color="#0f0" />
           </TouchableOpacity>
 
           {isActive && (
@@ -376,7 +404,7 @@ const App = () => {
                 onPressIn={() => handleDirectionPress("right")}
                 onPressOut={handleDirectionRelease}
               >
-                <MaterialIcons name="arrow-forward" size={24} color="white" />
+                <MaterialIcons name="arrow-forward" size={24} color="#0f0" />
               </TouchableOpacity>
             </>
           )}
@@ -413,7 +441,7 @@ const App = () => {
               contentContainerStyle={styles.modalContentContainer}
               keyboardShouldPersistTaps="handled"
             >
-              <Text style={styles.settingLabel}>Detection Threshold</Text>
+              <Text style={styles.settingLabel}>Detection Treshold</Text>
               <Text style={styles.settingDescription}>
                 Set the distance threshold for showing objects on radar. Objects
                 beyond this distance will not be marked with green dots (1-100
@@ -448,6 +476,60 @@ const App = () => {
                   onPress={saveSettings}
                 >
                   <Text style={styles.saveButtonText}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Reset Confirmation Modal */}
+      <Modal
+        visible={showResetConfirm}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={closeResetConfirm}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
+        >
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Confirm Reset</Text>
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={closeResetConfirm}
+              >
+                <MaterialIcons name="close" size={24} color="#0f0" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={styles.modalContent}
+              contentContainerStyle={styles.modalContentContainer}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.settingLabel}>Reset radar position?</Text>
+              <Text style={styles.settingDescription}>
+                This will reset the radar to its starting position and clear any
+                detected records.
+              </Text>
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.cancelButton]}
+                  onPress={closeResetConfirm}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.resetConfirmButton]}
+                  onPress={confirmReset}
+                >
+                  <Text style={styles.resetConfirmButtonText}>Confirm</Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -515,10 +597,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#f44336",
   },
   directionButton: {
-    backgroundColor: "#4CAF50", // Green color
+    backgroundColor: "transparent",
+    borderWidth: 2,
+    borderColor: "#0f0",
   },
   buttonActive: {
-    backgroundColor: "#2E7D32", // Darker green when active/pressed
     transform: [{ scale: 0.95 }], // Slight scale down effect
   },
   buttonText: {
@@ -550,8 +633,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "rgba(0, 50, 0, 0.3)",
-    paddingHorizontal: 15,
-    paddingVertical: 10,
+    justifyContent: "center",
+    width: 140,
+    height: 44,
     borderRadius: 25,
     marginTop: 15,
     borderWidth: 1,
@@ -562,6 +646,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "bold",
     marginLeft: 8,
+  },
+  settingsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 15,
+  },
+  settingsSpacer: {
+    width: 12,
   },
   // Modal Styles
   modalOverlay: {
@@ -695,6 +788,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(0, 255, 0, 0.3)",
     alignSelf: "center",
+  },
+  resetConfirmButton: {
+    backgroundColor: "rgba(255, 152, 0, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 152, 0, 0.5)",
+  },
+  resetConfirmButtonText: {
+    color: "#FFA500",
+    fontSize: 16,
+    fontWeight: "bold",
   },
   firstObjectContainer: {
     backgroundColor: "rgba(0, 50, 0, 0.3)",

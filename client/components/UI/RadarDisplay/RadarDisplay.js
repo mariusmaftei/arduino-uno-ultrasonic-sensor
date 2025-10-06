@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { View, StyleSheet, Animated, Easing } from "react-native";
+import { Audio } from "expo-av";
 import Svg, {
   Circle,
   Line,
@@ -13,8 +14,6 @@ import Svg, {
 } from "react-native-svg";
 
 const size = 300; // Fixed size for the radar
-const initialMaxDistance = 100; // Initial maximum distance in cm
-const scaledMaxDistance = 50; // Scaled maximum distance when object found
 
 const RadarDisplay = ({
   angle,
@@ -22,7 +21,10 @@ const RadarDisplay = ({
   detectionThreshold = 100, // Distance threshold for showing green dot
   isScanning = false, // Whether radar is actively scanning
   resetTrigger = 0, // Increment this to trigger a reset of first object
+  onFirstObjectDetected, // Optional callback to inform parent when first object is detected
 }) => {
+  // Use detectionThreshold as the maximum distance for filtering
+  const maxDistance = detectionThreshold;
   const sweepAnim = useRef(new Animated.Value(90)).current;
   const prevAngle = useRef(angle);
   const [isTransitioning, setIsTransitioning] = useState(false);
@@ -35,20 +37,47 @@ const RadarDisplay = ({
 
   // First object tracking and pulsing dot
   const [firstObject, setFirstObject] = useState(null);
-  const [maxDistance, setMaxDistance] = useState(detectionThreshold);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const dotWaveAnim1 = useRef(new Animated.Value(0)).current;
+  const dotWaveAnim2 = useRef(new Animated.Value(0)).current;
+  const dotWaveAnim3 = useRef(new Animated.Value(0)).current;
 
-  // Update maxDistance when prop changes
+  // Sound management
+  const [sound, setSound] = useState(null);
+  const [isSoundPlaying, setIsSoundPlaying] = useState(false);
+
+  // Initialize audio
   useEffect(() => {
-    setMaxDistance(detectionThreshold);
-  }, [detectionThreshold]);
+    let soundObject;
+
+    const loadSound = async () => {
+      try {
+        const { sound } = await Audio.Sound.createAsync(
+          require("../../../assets/sounds/radio-wave-object-found.mp3"),
+          { shouldPlay: false, isLooping: true }
+        );
+        soundObject = sound;
+        setSound(sound);
+      } catch (error) {
+        console.error("Failed to load sound:", error);
+      }
+    };
+
+    loadSound();
+
+    return () => {
+      if (soundObject) {
+        soundObject.unloadAsync();
+      }
+    };
+  }, []);
 
   // Track distance changes for visual updates only (no automatic sound)
   useEffect(() => {
     prevDistance.current = distance;
   }, [distance]);
 
-  // Track first object found within dynamic maxDistance range (only when scanning)
+  // Track first object found within fixed maxDistance range (only when scanning)
   useEffect(() => {
     if (isScanning && distance && distance <= maxDistance && !firstObject) {
       // Convert angle to radar coordinates
@@ -58,14 +87,27 @@ const RadarDisplay = ({
       const x = size / 2 + radarDistance * Math.sin(radarAngle);
       const y = size / 2 - radarDistance * Math.cos(radarAngle);
 
-      setFirstObject({ x, y, angle, distance });
+      const detected = { x, y, angle, distance };
+      setFirstObject(detected);
+
+      // Notify parent so it can show the info container in sync with the green dot
+      if (typeof onFirstObjectDetected === "function") {
+        onFirstObjectDetected({ angle, distance });
+      }
     }
 
     // Clear first object when not scanning
     if (!isScanning) {
       setFirstObject(null);
     }
-  }, [distance, angle, firstObject, maxDistance, isScanning]);
+  }, [
+    distance,
+    angle,
+    firstObject,
+    isScanning,
+    maxDistance,
+    onFirstObjectDetected,
+  ]);
 
   // Clear first object when resetTrigger changes
   useEffect(() => {
@@ -74,6 +116,40 @@ const RadarDisplay = ({
     }
   }, [resetTrigger]);
 
+  // Handle sound playing when first object is detected/cleared
+  useEffect(() => {
+    const playSound = async () => {
+      if (sound && firstObject && !isSoundPlaying) {
+        try {
+          setIsSoundPlaying(true);
+          await sound.setPositionAsync(0);
+          await sound.playAsync();
+        } catch (error) {
+          console.error("Failed to play sound:", error);
+          setIsSoundPlaying(false);
+        }
+      }
+    };
+
+    const stopSound = async () => {
+      if (sound && !firstObject && isSoundPlaying) {
+        try {
+          await sound.stopAsync();
+          setIsSoundPlaying(false);
+        } catch (error) {
+          console.error("Failed to stop sound:", error);
+          setIsSoundPlaying(false);
+        }
+      }
+    };
+
+    if (firstObject) {
+      playSound();
+    } else {
+      stopSound();
+    }
+  }, [firstObject, sound, isSoundPlaying]);
+
   // Initialize pulsing animation for first object
   useEffect(() => {
     if (firstObject) {
@@ -81,13 +157,13 @@ const RadarDisplay = ({
         Animated.sequence([
           Animated.timing(pulseAnim, {
             toValue: 0.3,
-            duration: 1000,
+            duration: 700,
             easing: Easing.inOut(Easing.ease),
             useNativeDriver: true,
           }),
           Animated.timing(pulseAnim, {
             toValue: 1,
-            duration: 1000,
+            duration: 700,
             easing: Easing.inOut(Easing.ease),
             useNativeDriver: true,
           }),
@@ -100,6 +176,49 @@ const RadarDisplay = ({
       };
     }
   }, [firstObject, pulseAnim]);
+
+  // Wave effect around the first-object green dot
+  useEffect(() => {
+    const createDotWaveAnimation = (animValue, delay = 0) => {
+      return Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(animValue, {
+            toValue: 1,
+            duration: 1800,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(animValue, {
+            toValue: 0,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+    };
+
+    let wave1, wave2, wave3;
+
+    if (firstObject) {
+      wave1 = createDotWaveAnimation(dotWaveAnim1, 0);
+      wave2 = createDotWaveAnimation(dotWaveAnim2, 400);
+      wave3 = createDotWaveAnimation(dotWaveAnim3, 800);
+      wave1.start();
+      wave2.start();
+      wave3.start();
+    } else {
+      dotWaveAnim1.setValue(0);
+      dotWaveAnim2.setValue(0);
+      dotWaveAnim3.setValue(0);
+    }
+
+    return () => {
+      if (wave1) wave1.stop();
+      if (wave2) wave2.stop();
+      if (wave3) wave3.stop();
+    };
+  }, [firstObject, dotWaveAnim1, dotWaveAnim2, dotWaveAnim3]);
 
   // Initialize wave animations
   useEffect(() => {
@@ -221,8 +340,15 @@ const RadarDisplay = ({
   };
 
   const renderDistanceCircles = () => {
-    // Always show full 100cm range circles
-    const circles = [25, 50, 75, 100];
+    // Create circles based on detection threshold
+    const quarterThreshold = maxDistance / 4;
+    const circles = [
+      quarterThreshold,
+      quarterThreshold * 2,
+      quarterThreshold * 3,
+      maxDistance,
+    ];
+
     return circles.map((circleDistance, index) => {
       const radius = (size / 2 / 4) * (index + 1);
       return (
@@ -332,8 +458,8 @@ const RadarDisplay = ({
     }
 
     // Calculate position for dynamic graduation mark based on current distance
-    // Always use 100cm as maximum for radar display
-    const targetDistance = distance ? (distance / 100) * (size / 2) : 0;
+    // Use detection threshold as maximum for radar display
+    const targetDistance = distance ? (distance / maxDistance) * (size / 2) : 0;
     const dynamicGraduationY = -targetDistance;
 
     return (
@@ -348,9 +474,9 @@ const RadarDisplay = ({
         />
         {graduations}
 
-        {/* Dynamic graduation mark showing current distance position - only show if within detection threshold */}
+        {/* Dynamic graduation mark showing current distance position - only show if within max distance */}
         {/* Dynamic distance graduation - only show when object is actually detected */}
-        {distance && distance > 0 && distance <= detectionThreshold && (
+        {distance && distance > 0 && distance <= maxDistance && (
           <G>
             {/* Main graduation line - longer and brighter */}
             <Line
@@ -531,6 +657,105 @@ const RadarDisplay = ({
     );
   };
 
+  // Render localized wave ripples around the first-object dot
+  const renderDotWaveEffect = () => {
+    if (!firstObject) return null;
+
+    const sizeLocal = 80; // size of the ripple container around the dot
+
+    const scale1 = dotWaveAnim1.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.3, 1],
+    });
+    const scale2 = dotWaveAnim2.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.3, 1],
+    });
+    const scale3 = dotWaveAnim3.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.3, 1],
+    });
+
+    const opacity1 = dotWaveAnim1.interpolate({
+      inputRange: [0, 0.1, 0.9, 1],
+      outputRange: [0, 0.5, 0.2, 0],
+    });
+    const opacity2 = dotWaveAnim2.interpolate({
+      inputRange: [0, 0.1, 0.9, 1],
+      outputRange: [0, 0.35, 0.15, 0],
+    });
+    const opacity3 = dotWaveAnim3.interpolate({
+      inputRange: [0, 0.1, 0.9, 1],
+      outputRange: [0, 0.2, 0.1, 0],
+    });
+
+    const baseStyle = {
+      position: "absolute",
+      left: firstObject.x - sizeLocal / 2,
+      top: firstObject.y - sizeLocal / 2,
+      width: sizeLocal,
+      height: sizeLocal,
+      justifyContent: "center",
+      alignItems: "center",
+    };
+
+    return (
+      <>
+        <Animated.View
+          style={[
+            baseStyle,
+            { transform: [{ scale: scale1 }], opacity: opacity1 },
+          ]}
+        >
+          <Svg height={sizeLocal} width={sizeLocal}>
+            <Circle
+              cx={sizeLocal / 2}
+              cy={sizeLocal / 2}
+              r={sizeLocal / 2 - 1}
+              fill="none"
+              stroke="rgba(0, 255, 0, 0.6)"
+              strokeWidth="2"
+            />
+          </Svg>
+        </Animated.View>
+        <Animated.View
+          style={[
+            baseStyle,
+            { transform: [{ scale: scale2 }], opacity: opacity2 },
+          ]}
+        >
+          <Svg height={sizeLocal} width={sizeLocal}>
+            <Circle
+              cx={sizeLocal / 2}
+              cy={sizeLocal / 2}
+              r={sizeLocal / 2 - 1}
+              fill="none"
+              stroke="rgba(0, 255, 0, 0.4)"
+              strokeWidth="2"
+            />
+          </Svg>
+        </Animated.View>
+        <Animated.View
+          style={[
+            baseStyle,
+            { transform: [{ scale: scale3 }], opacity: opacity3 },
+          ]}
+        >
+          <Svg height={sizeLocal} width={sizeLocal}>
+            <Circle
+              cx={sizeLocal / 2}
+              cy={sizeLocal / 2}
+              r={sizeLocal / 2 - 1}
+              fill="none"
+              stroke="rgba(0, 255, 0, 0.25)"
+              strokeWidth="2"
+            />
+          </Svg>
+        </Animated.View>
+      </>
+    );
+  };
+
   return (
     <View style={styles.container}>
       <Svg height={size} width={size} style={styles.radar}>
@@ -593,28 +818,21 @@ const RadarDisplay = ({
               {isScanning &&
                 distance &&
                 distance > 0 &&
-                distance <= detectionThreshold && (
+                distance <= maxDistance && (
                   <Circle
                     cx={0}
                     cy={-targetDistance}
-                    r="3"
-                    fill={
-                      distance === detectionThreshold
-                        ? "rgba(0, 255, 0, 1)"
-                        : "rgba(255, 0, 0, 0.8)"
-                    }
-                    stroke={
-                      distance === detectionThreshold
-                        ? "rgba(0, 255, 0, 1)"
-                        : "none"
-                    }
-                    strokeWidth={distance === detectionThreshold ? "2" : "0"}
+                    r="4"
+                    fill="rgba(255, 0, 0, 0.9)"
+                    stroke="rgba(255, 0, 0, 1)"
+                    strokeWidth="1"
                   />
                 )}
             </G>
           </Svg>
         </Animated.View>
       </Svg>
+      {renderDotWaveEffect()}
       {renderPulsingDot()}
     </View>
   );
